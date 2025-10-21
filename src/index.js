@@ -11,6 +11,10 @@ console.log("Mongo URI:", process.env.MONGO_URI ? "Loaded ✅" : "Missing ❌");
 const app = express();
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.json({ message: "String Analyzer API is running" });
+});
+
 // Health check
 app.get("/_health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 
