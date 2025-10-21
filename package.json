@@ -8,6 +8,7 @@
   },
   "keywords": [],
   "type": "module",
+  "engines": {"node": "20.x"},
   "author": "",
   "license": "ISC",
   "dependencies": {
