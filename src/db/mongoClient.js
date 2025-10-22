@@ -14,8 +14,10 @@ export async function initMongo(mongoUri) {
   if (client && collection) return collection;
 
   try {
-    // Modern driver — no deprecated options needed
+    // ✅ Add this configuration object
     client = new MongoClient(mongoUri);
+
+
     await client.connect();
 
     const db = client.db(DB_NAME);
