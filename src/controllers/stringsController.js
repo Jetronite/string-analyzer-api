@@ -76,29 +76,46 @@ router.post("/strings", async (req, res, next) => {
   }
 });
 
+
 // --------------------------------------------------------------------
-// 2. GET /strings/:value (Get Specific String)
+// 1. GET /strings/filter-by-natural-language (NL Filter)
 // --------------------------------------------------------------------
-router.get("/strings/:value", async (req, res, next) => {
+router.get("/strings/filter-by-natural-language", async (req, res, next) => {
   try {
     const collection = getCollection();
-    const raw = req.params.value;
-    if (!raw) {
-      return res.status(400).json({ error: "Missing string value in path." });
+    const { query } = req.query;
+    if (!query) {
+      return res.status(400).json({ error: "Missing 'query' parameter." });
     }
-    
-    const decoded = decodeURIComponent(raw);
-    const id = sha256Hex(decoded);
 
-    const doc = await collection.findOne({ _id: id });
-    if (!doc) {
-      return res.status(404).json({ error: "String not found." });
-    }
-    return res.json(documentToResponse(doc));
+    // Use nlParser (which throws 400/422 errors)
+    const interpreted = parseNaturalLanguageQuery(decodeURIComponent(query));
+    const parsed = interpreted.parsed_filters;
+
+    // Build mongo query just like the GET /strings route
+    const mongoQuery = {};
+    if (parsed.is_palindrome !== undefined) mongoQuery["properties.is_palindrome"] = parsed.is_palindrome;
+    if (parsed.min_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $gte: parsed.min_length };
+    if (parsed.max_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $lte: parsed.max_length };
+    if (parsed.word_count !== undefined) mongoQuery["properties.word_count"] = parsed.word_count;
+    if (parsed.contains_character !== undefined) mongoQuery["characters_array"] = parsed.contains_character;
+
+    const docs = await collection.find(mongoQuery).sort({ created_at: -1 }).limit(100).toArray();
+    return res.json({
+      data: docs.map(documentToResponse),
+      count: docs.length,
+      interpreted_query: interpreted,
+    });
   } catch (err) {
+    // Catch errors from parseNaturalLanguageQuery
+    if (err.status === 400 || err.status === 422) {
+      return res.status(err.status).json({ error: err.message });
+    }
     next(err);
   }
 });
+
+
 
 // --------------------------------------------------------------------
 // 3. GET /strings (Get All Strings with Filtering)
@@ -183,43 +200,31 @@ router.get("/strings", async (req, res, next) => {
   }
 });
 
+
 // --------------------------------------------------------------------
-// 4. GET /strings/filter-by-natural-language (NL Filter)
+// 4. GET /strings/:value (Get Specific String)
 // --------------------------------------------------------------------
-router.get("/strings/filter-by-natural-language", async (req, res, next) => {
+router.get("/strings/:value", async (req, res, next) => {
   try {
     const collection = getCollection();
-    const { query } = req.query;
-    if (!query) {
-      return res.status(400).json({ error: "Missing 'query' parameter." });
+    const raw = req.params.value;
+    if (!raw) {
+      return res.status(400).json({ error: "Missing string value in path." });
     }
+    
+    const decoded = decodeURIComponent(raw);
+    const id = sha256Hex(decoded);
 
-    // Use nlParser (which throws 400/422 errors)
-    const interpreted = parseNaturalLanguageQuery(decodeURIComponent(query));
-    const parsed = interpreted.parsed_filters;
-
-    // Build mongo query just like the GET /strings route
-    const mongoQuery = {};
-    if (parsed.is_palindrome !== undefined) mongoQuery["properties.is_palindrome"] = parsed.is_palindrome;
-    if (parsed.min_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $gte: parsed.min_length };
-    if (parsed.max_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $lte: parsed.max_length };
-    if (parsed.word_count !== undefined) mongoQuery["properties.word_count"] = parsed.word_count;
-    if (parsed.contains_character !== undefined) mongoQuery["characters_array"] = parsed.contains_character;
-
-    const docs = await collection.find(mongoQuery).sort({ created_at: -1 }).limit(100).toArray();
-    return res.json({
-      data: docs.map(documentToResponse),
-      count: docs.length,
-      interpreted_query: interpreted,
-    });
+    const doc = await collection.findOne({ _id: id });
+    if (!doc) {
+      return res.status(404).json({ error: "String not found." });
+    }
+    return res.json(documentToResponse(doc));
   } catch (err) {
-    // Catch errors from parseNaturalLanguageQuery
-    if (err.status === 400 || err.status === 422) {
-      return res.status(err.status).json({ error: err.message });
-    }
     next(err);
   }
 });
+
 
 // --------------------------------------------------------------------
 // 5. DELETE /strings/:value (Delete String)
