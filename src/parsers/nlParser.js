@@ -13,7 +13,7 @@ class ParsingError extends Error {
 }
 
 /**
- * Compute SHA-256 hex digest for input string.
+ * Translates a natural language query string into a structured filter object.
  */
 export function parseNaturalLanguageQuery(raw) {
     if (!raw || typeof raw !== "string") {
@@ -25,16 +25,15 @@ export function parseNaturalLanguageQuery(raw) {
 
     const filters = {};
 
-    // --- 1. Boolean and Simple Checks ---
+    // --- 1. Boolean and Word Count Checks ---
 
     // rule: palindromic / palindrome
     if (text.match(/\bpalindrom/)) filters.is_palindrome = true;
 
-    // rule: single word / one word (Set to 1, conflicts handled later)
+    // rule: single word / one word (Set to 1)
     if (text.match(/\b(single|one)\s+word\b/)) filters.word_count = 1;
 
     // rule: word count explicit "words" - capture "exactly N words" or "N word(s)"
-    // NOTE: This captures 'exactly 3 words' and may override 'single word'. Order matters.
     const wordMatch = text.match(/(?:exactly\s+)?(\d+)\s+words?/);
     if (wordMatch) {
         const parsedWordCount = Number(wordMatch[1]);
@@ -53,17 +52,17 @@ export function parseNaturalLanguageQuery(raw) {
     // rule: longer than N characters
     const longerMatch = text.match(/longer than (\d+)(?:\s+chars?)?/);
     if (longerMatch) {
-        min_length_val = Number(longerMatch[1]) + 1; // "longer than 10" => min_length 11
+        min_length_val = Number(longerMatch[1]) + 1;
     }
 
     // rule: shorter than N characters
     const shorterMatch = text.match(/shorter than (\d+)(?:\s+chars?)?/);
     if (shorterMatch) {
-        max_length_val = Number(shorterMatch[1]) - 1; // "shorter than 10" => max_length 9
+        max_length_val = Number(shorterMatch[1]) - 1;
     }
 
     // rule: exactly N characters (If present, overrides min/max)
-    const exactMatch = text.match(/\b(\d+)\s+chars?\b/); // Matches "10 characters" but might need refinement
+    const exactMatch = text.match(/\b(\d+)\s+chars?\b/); 
     if (exactMatch && !longerMatch && !shorterMatch) {
         min_length_val = Number(exactMatch[1]);
         max_length_val = Number(exactMatch[1]);
@@ -81,23 +80,20 @@ export function parseNaturalLanguageQuery(raw) {
     }
 
     // rule: explicit "strings containing the letter z" or "containing z"
-    // Capture single character 'a' or 'z' after "contains"
-    // Also captures single letter from 'letter a' or 'character a'
     const containsMatch = text.match(/(?:contain|containing)(?:s)?\s+(?:the\s+(?:letter|character)\s+)?(['"]?)([a-z])\1/);
     if (containsMatch) {
-        // If a character was already set (e.g., by the "first vowel" heuristic),
-        // we assume the explicit character is the final intent.
+        // Explicit match overrides heuristic
         filters.contains_character = containsMatch[2];
     }
     
     // --- 4. Validation & Error Handling ---
 
-    // If nothing parsed, fail (400 Bad Request)
+    // If nothing parsed, fail
     if (Object.keys(filters).length === 0) {
         throw new ParsingError("Unable to parse natural language query", 400);
     }
 
-    // Validate logical consistency (422 Unprocessable Entity)
+    // Validate logical consistency
     if (filters.min_length !== undefined && filters.max_length !== undefined) {
         if (filters.min_length > filters.max_length) {
             throw new ParsingError("Parsed filters are conflicting (min_length > max_length)", 422);

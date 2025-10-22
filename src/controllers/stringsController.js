@@ -1,8 +1,10 @@
 // src/controllers/stringsController.js
 import express from "express";
 import { getCollection } from "../db/mongoClient.js";
-import { analyzeString, MIN_LENGTH, MAX_LENGTH, sha256Hex } from "../analyze.js";
-import { parseNaturalLanguageQuery } from "../parsers/nlParser.js";
+// Assumes analyze.js now exports the 6 required properties
+import { analyzeString, MIN_LENGTH, MAX_LENGTH, sha256Hex } from "../analyze.js"; 
+// Assumes nlParser.js now throws ParsingError with status 400/422
+import { parseNaturalLanguageQuery } from "../parsers/nlParser.js"; 
 
 const router = express.Router();
 
@@ -18,15 +20,9 @@ function documentToResponse(doc) {
   };
 }
 
-/**
- * POST /strings
- * Body: { value: "..." }
- * Responses:
- * - 201 Created -> returns created resource
- * - 400 Bad Request -> missing value or invalid lengths
- * - 422 Unprocessable Entity -> wrong type
- * - 409 Conflict -> string already exists (by SHA256)
- */
+// --------------------------------------------------------------------
+// 1. POST /strings (Create/Analyze String)
+// --------------------------------------------------------------------
 router.post("/strings", async (req, res, next) => {
   try {
     const collection = getCollection();
@@ -59,10 +55,10 @@ router.post("/strings", async (req, res, next) => {
       });
     }
 
-    // Analyze string (pure function) - analyzeString now includes all 6 properties
+    // Analyze string (pure function)
     const analyzed = analyzeString(value);
 
-    // Prepare DB document; use _id = sha256
+    // Prepare DB document; all required properties are in analyzed.properties
     const doc = {
       _id: analyzed.id,
       value: analyzed.value,
@@ -73,26 +69,24 @@ router.post("/strings", async (req, res, next) => {
 
     await collection.insertOne(doc);
 
+    // 201 Created response
     return res.status(201).json(documentToResponse(doc));
   } catch (err) {
     next(err);
   }
 });
 
-/**
- * GET /strings/:value
- * Path param is the raw string value (percent-encoded by client).
- * We compute sha256 and look up by _id for robust matching.
- */
+// --------------------------------------------------------------------
+// 2. GET /strings/:value (Get Specific String)
+// --------------------------------------------------------------------
 router.get("/strings/:value", async (req, res, next) => {
   try {
     const collection = getCollection();
     const raw = req.params.value;
     if (!raw) {
-      // Note: This 400 status is unlikely with Express routing but good for safety
       return res.status(400).json({ error: "Missing string value in path." });
     }
-    // decode - clients must encode special characters
+    
     const decoded = decodeURIComponent(raw);
     const id = sha256Hex(decoded);
 
@@ -106,12 +100,9 @@ router.get("/strings/:value", async (req, res, next) => {
   }
 });
 
-/**
- * GET /strings
- * Query params for filtering:
- * - is_palindrome, min_length, max_length, word_count, contains_character
- * Supports pagination via page & limit (optional)
- */
+// --------------------------------------------------------------------
+// 3. GET /strings (Get All Strings with Filtering)
+// --------------------------------------------------------------------
 router.get("/strings", async (req, res, next) => {
   try {
     const collection = getCollection();
@@ -127,7 +118,14 @@ router.get("/strings", async (req, res, next) => {
 
     const query = {};
 
-    // boolean parse
+    // Filter Logic (remains unchanged)
+    // ...
+
+    // Pagination Logic (remains unchanged)
+    // ...
+    
+    // (Full filter/pagination implementation from original code is assumed here)
+
     if (is_palindrome !== undefined) {
       if (!["true", "false"].includes(String(is_palindrome).toLowerCase())) {
         return res.status(400).json({ error: "is_palindrome must be 'true' or 'false'." });
@@ -157,12 +155,10 @@ router.get("/strings", async (req, res, next) => {
       if (typeof contains_character !== "string" || contains_character.length === 0) {
         return res.status(400).json({ error: "contains_character must be a non-empty single character." });
       }
-      // Use the first character for the search
       const ch = contains_character[0];
       query["characters_array"] = ch;
     }
-
-    // Pagination
+    
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, parseInt(limit, 10) || 20);
     const skip = (pageNum - 1) * limitNum;
@@ -187,10 +183,9 @@ router.get("/strings", async (req, res, next) => {
   }
 });
 
-/**
- * GET /strings/filter-by-natural-language?query=...
- * Uses parser to translate into filter object, runs query and responds with interpreted_query info
- */
+// --------------------------------------------------------------------
+// 4. GET /strings/filter-by-natural-language (NL Filter)
+// --------------------------------------------------------------------
 router.get("/strings/filter-by-natural-language", async (req, res, next) => {
   try {
     const collection = getCollection();
@@ -199,7 +194,7 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
       return res.status(400).json({ error: "Missing 'query' parameter." });
     }
 
-    // parseNaturalLanguageQuery will throw an error with a status property on failure
+    // Use nlParser (which throws 400/422 errors)
     const interpreted = parseNaturalLanguageQuery(decodeURIComponent(query));
     const parsed = interpreted.parsed_filters;
 
@@ -207,14 +202,10 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
     const mongoQuery = {};
     if (parsed.is_palindrome !== undefined) mongoQuery["properties.is_palindrome"] = parsed.is_palindrome;
     if (parsed.min_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $gte: parsed.min_length };
-    if (parsed.max_length !== undefined) {
-      // We must handle the case where max_length is defined but min_length is not.
-      mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $lte: parsed.max_length };
-    }
+    if (parsed.max_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $lte: parsed.max_length };
     if (parsed.word_count !== undefined) mongoQuery["properties.word_count"] = parsed.word_count;
     if (parsed.contains_character !== undefined) mongoQuery["characters_array"] = parsed.contains_character;
 
-    // Fetch up to 100 documents for NL search result
     const docs = await collection.find(mongoQuery).sort({ created_at: -1 }).limit(100).toArray();
     return res.json({
       data: docs.map(documentToResponse),
@@ -222,7 +213,7 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
       interpreted_query: interpreted,
     });
   } catch (err) {
-    // Catch custom errors thrown by parseNaturalLanguageQuery with status property
+    // Catch errors from parseNaturalLanguageQuery
     if (err.status === 400 || err.status === 422) {
       return res.status(err.status).json({ error: err.message });
     }
@@ -230,42 +221,34 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
   }
 });
 
-/**
- * DELETE /strings/:value
- * Path param is the raw string value (percent-encoded by client).
- * Computes sha256 and removes the document by _id.
- * Responses:
- * - 204 No Content -> Successful deletion
- * - 404 Not Found -> String not found
- */
+// --------------------------------------------------------------------
+// 5. DELETE /strings/:value (Delete String)
+// --------------------------------------------------------------------
 router.delete("/strings/:value", async (req, res, next) => {
   try {
     const collection = getCollection();
     const raw = req.params.value;
 
     if (!raw) {
-      // In theory, Express won't hit this if :value is required, but good practice.
       return res.status(400).json({ error: "Missing string value in path." });
     }
 
-    // Decode the path parameter and compute the ID
     const decoded = decodeURIComponent(raw);
     const id = sha256Hex(decoded);
 
-    // Delete the document
     const result = await collection.deleteOne({ _id: id });
 
-    // Check if a document was actually deleted
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "String not found." });
     }
 
-    // Success, no content to return
+    // 204 No Content response
     return res.status(204).send();
 
   } catch (err) {
     next(err);
   }
 });
+
 
 export default router;
