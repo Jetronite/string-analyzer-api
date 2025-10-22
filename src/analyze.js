@@ -60,29 +60,38 @@ function computeUniqueCharactersAndArray(value) {
  * analyzeString(value) -> returns object with properties per spec
  * NOTE: this function is pure—no DB access, no side-effects.
  */
+// src/analyze.js (Revised Export Function)
+
+// ... (all helper functions remain the same) ...
+
+/**
+ * analyzeString(value) -> returns object with properties per spec
+ * NOTE: this function is pure—no DB access, no side-effects.
+ */
 export function analyzeString(value) {
-  if (typeof value !== "string") {
-    throw new TypeError("analyzeString expects a string");
-  }
+    if (typeof value !== "string") {
+        throw new TypeError("analyzeString expects a string");
+    }
 
-  const length = Array.from(value).length; // use code unit count; replace with grapheme logic if needed
-  const is_palindrome = computeIsPalindrome(value);
-  const word_count = computeWordCount(value);
-  const sha256_hash = sha256Hex(value);
-  const character_frequency_map = computeCharacterFrequencyMap(value);
-  const { uniqueCount: unique_characters, charactersArray } = computeUniqueCharactersAndArray(value);
+    const length = Array.from(value).length;
+    const is_palindrome = computeIsPalindrome(value);
+    const word_count = computeWordCount(value);
+    const sha256_hash = sha256Hex(value); // Calculated here
+    const character_frequency_map = computeCharacterFrequencyMap(value);
+    const { uniqueCount: unique_characters, charactersArray } = computeUniqueCharactersAndArray(value);
 
-  return {
-    id: sha256_hash,
-    value,
-    properties: {
-      length,
-      is_palindrome,
-      unique_characters,
-      word_count,
-      character_frequency_map,
-    },
-    characters_array: charactersArray, // helpful for `contains_character` queries
-    created_at: new Date().toISOString(),
-  };
+    return {
+        id: sha256_hash, // Used as MongoDB _id
+        value,
+        properties: {
+            length,
+            is_palindrome,
+            unique_characters,
+            word_count,
+            sha256_hash, // ⬅️ ADDED: Now included in the properties object
+            character_frequency_map,
+        },
+        characters_array: charactersArray,
+        created_at: new Date().toISOString(),
+    };
 }

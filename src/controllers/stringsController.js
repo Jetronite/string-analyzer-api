@@ -22,10 +22,10 @@ function documentToResponse(doc) {
  * POST /strings
  * Body: { value: "..." }
  * Responses:
- *  - 201 Created -> returns created resource
- *  - 400 Bad Request -> missing value or invalid lengths
- *  - 422 Unprocessable Entity -> wrong type
- *  - 409 Conflict -> string already exists (by SHA256)
+ * - 201 Created -> returns created resource
+ * - 400 Bad Request -> missing value or invalid lengths
+ * - 422 Unprocessable Entity -> wrong type
+ * - 409 Conflict -> string already exists (by SHA256)
  */
 router.post("/strings", async (req, res, next) => {
   try {
@@ -59,7 +59,7 @@ router.post("/strings", async (req, res, next) => {
       });
     }
 
-    // Analyze string (pure function)
+    // Analyze string (pure function) - analyzeString now includes all 6 properties
     const analyzed = analyzeString(value);
 
     // Prepare DB document; use _id = sha256
@@ -89,6 +89,7 @@ router.get("/strings/:value", async (req, res, next) => {
     const collection = getCollection();
     const raw = req.params.value;
     if (!raw) {
+      // Note: This 400 status is unlikely with Express routing but good for safety
       return res.status(400).json({ error: "Missing string value in path." });
     }
     // decode - clients must encode special characters
@@ -108,11 +109,7 @@ router.get("/strings/:value", async (req, res, next) => {
 /**
  * GET /strings
  * Query params for filtering:
- *  - is_palindrome (true/false)
- *  - min_length (int)
- *  - max_length (int)
- *  - word_count (int exact)
- *  - contains_character (single character)
+ * - is_palindrome, min_length, max_length, word_count, contains_character
  * Supports pagination via page & limit (optional)
  */
 router.get("/strings", async (req, res, next) => {
@@ -160,10 +157,9 @@ router.get("/strings", async (req, res, next) => {
       if (typeof contains_character !== "string" || contains_character.length === 0) {
         return res.status(400).json({ error: "contains_character must be a non-empty single character." });
       }
-      // We'll do case-insensitive: normalize to the character as-is and search characters_array
+      // Use the first character for the search
       const ch = contains_character[0];
       query["characters_array"] = ch;
-      // Note: characters_array is case-sensitive as stored; you may prefer to store lowercased characters for better matching.
     }
 
     // Pagination
@@ -203,6 +199,7 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
       return res.status(400).json({ error: "Missing 'query' parameter." });
     }
 
+    // parseNaturalLanguageQuery will throw an error with a status property on failure
     const interpreted = parseNaturalLanguageQuery(decodeURIComponent(query));
     const parsed = interpreted.parsed_filters;
 
@@ -210,10 +207,14 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
     const mongoQuery = {};
     if (parsed.is_palindrome !== undefined) mongoQuery["properties.is_palindrome"] = parsed.is_palindrome;
     if (parsed.min_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $gte: parsed.min_length };
-    if (parsed.max_length !== undefined) mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $lte: parsed.max_length };
+    if (parsed.max_length !== undefined) {
+      // We must handle the case where max_length is defined but min_length is not.
+      mongoQuery["properties.length"] = { ...(mongoQuery["properties.length"] || {}), $lte: parsed.max_length };
+    }
     if (parsed.word_count !== undefined) mongoQuery["properties.word_count"] = parsed.word_count;
     if (parsed.contains_character !== undefined) mongoQuery["characters_array"] = parsed.contains_character;
 
+    // Fetch up to 100 documents for NL search result
     const docs = await collection.find(mongoQuery).sort({ created_at: -1 }).limit(100).toArray();
     return res.json({
       data: docs.map(documentToResponse),
@@ -221,10 +222,48 @@ router.get("/strings/filter-by-natural-language", async (req, res, next) => {
       interpreted_query: interpreted,
     });
   } catch (err) {
-    // parseNaturalLanguageQuery may throw Error with status property
+    // Catch custom errors thrown by parseNaturalLanguageQuery with status property
     if (err.status === 400 || err.status === 422) {
       return res.status(err.status).json({ error: err.message });
     }
+    next(err);
+  }
+});
+
+/**
+ * DELETE /strings/:value
+ * Path param is the raw string value (percent-encoded by client).
+ * Computes sha256 and removes the document by _id.
+ * Responses:
+ * - 204 No Content -> Successful deletion
+ * - 404 Not Found -> String not found
+ */
+router.delete("/strings/:value", async (req, res, next) => {
+  try {
+    const collection = getCollection();
+    const raw = req.params.value;
+
+    if (!raw) {
+      // In theory, Express won't hit this if :value is required, but good practice.
+      return res.status(400).json({ error: "Missing string value in path." });
+    }
+
+    // Decode the path parameter and compute the ID
+    const decoded = decodeURIComponent(raw);
+    const id = sha256Hex(decoded);
+
+    // Delete the document
+    const result = await collection.deleteOne({ _id: id });
+
+    // Check if a document was actually deleted
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "String not found." });
+    }
+
+    // Success, no content to return
+    return res.status(204).send();
+
+  } catch (err) {
     next(err);
   }
 });
